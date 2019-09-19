@@ -48,6 +48,7 @@
 
 typedef long long ll64_t;
 
+/*
 struct rpchook_t
 {
 	int user_flag;
@@ -57,6 +58,8 @@ struct rpchook_t
 	struct timeval read_timeout;
 	struct timeval write_timeout;
 };
+*/
+
 static inline pid_t GetPid()
 {
 	char **p = (char**)pthread_self();
@@ -188,7 +191,8 @@ static inline rpchook_t * get_by_fd( int fd )
 	}
 	return NULL;
 }
-static inline rpchook_t * alloc_by_fd( int fd )
+
+rpchook_t * alloc_by_fd( int fd )
 {
 	if( fd > -1 && fd < (int)sizeof(g_rpchook_socket_fd) / (int)sizeof(g_rpchook_socket_fd[0]) )
 	{

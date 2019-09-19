@@ -89,5 +89,23 @@ stShareStack_t* co_alloc_sharestack(int iCount, int iStackSize);
 void co_set_env_list( const char *name[],size_t cnt);
 
 void co_log_err( const char *fmt,... );
+
+// 9.move from co_hook_sys_call.cpp, for support async
+// socket created not in coroutine
+
+#include <netinet/in.h>
+
+struct rpchook_t
+{
+  int user_flag;
+  struct sockaddr_in dest; //maybe sockaddr_un;
+  int domain; //AF_LOCAL , AF_INET
+
+  struct timeval read_timeout;
+  struct timeval write_timeout;
+};
+
+rpchook_t* alloc_by_fd(int fd);
+
 #endif
 
