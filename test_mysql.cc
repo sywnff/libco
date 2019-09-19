@@ -89,70 +89,70 @@ int main(int argc, char **argv) {
  */
 
 void* Routine(void *key) {
-	const char *skey = reinterpret_cast<const char*>(key);
-	co_enable_hook_sys();
-	log("co run:%p,%s", co_self(), skey);
+  const char *skey = reinterpret_cast<const char*>(key);
+  co_enable_hook_sys();
+  log("co run:%p,%s", co_self(), skey);
 
-	int round = 0;
-	while (!g_co_require_terminate) {
-      MYSQL *conn = GetDbConn();
-      assert(conn != NULL);
+  int round = 0;
+  while (!g_co_require_terminate) {
+    MYSQL *conn = GetDbConn();
+    assert(conn != NULL);
 
-      char sql[512] = {0};
-      int fid = total_num++;
-      int size = snprintf(
-      sql, sizeof(sql),
-          "insert ignore into t1(fid,fname,fcreate_time) values(%u,'%s-%d',now())",
-          fid, skey, round);
-      log("%s:%d:begin-insert:%u", skey, round, fid);
-      int ret = mysql_real_query(conn, sql, size);
-      log("%s:%d:end-insert:%u,ret=%d,%d,%s", skey, round, fid,
-          ret, mysql_errno(conn), mysql_error(conn));
+    char sql[512] = {0};
+    int fid = total_num++;
+    int size = snprintf(
+        sql, sizeof(sql),
+        "insert ignore into t1(fid,fname,fcreate_time) values(%u,'%s-%d',now())",
+        fid, skey, round);
+    log("%s:%d:begin-insert:%u", skey, round, fid);
+    int ret = mysql_real_query(conn, sql, size);
+    log("%s:%d:end-insert:%u,ret=%d,%d,%s", skey, round, fid,
+        ret, mysql_errno(conn), mysql_error(conn));
 
-      if (ret != 0) {
-        FreeDbConn(conn);
-        poll(NULL, 0, 10);
-        continue;
-      }
-
-      size = snprintf(
-          sql, sizeof(sql),
-          "select fcreate_time from t1 where fid=%u",
-          fid);
-      log("%s:%d:begin-query:%u", skey, round, fid);
-      ret = mysql_real_query(conn, sql, size);
-      assert(ret == 0);
-
-      log("%s:%d:begin-store:%u", skey, round, fid);
-      MYSQL_RES* res = mysql_store_result(conn);
-      assert(res != NULL);
-
-      log("%s:%d:end-fetch:%u", skey, round, fid);
-      MYSQL_ROW row = mysql_fetch_row(res);
-      assert(row != NULL);
-
-      mysql_free_result(res);
+    if (ret != 0) {
       FreeDbConn(conn);
+      poll(NULL, 0, 10);
+      continue;
+    }
 
-      round++;
-	}
+    size = snprintf(
+        sql, sizeof(sql),
+        "select fcreate_time from t1 where fid=%u",
+        fid);
+    log("%s:%d:begin-query:%u", skey, round, fid);
+    ret = mysql_real_query(conn, sql, size);
+    assert(ret == 0);
 
-	return NULL;
+    log("%s:%d:begin-store:%u", skey, round, fid);
+    MYSQL_RES* res = mysql_store_result(conn);
+    assert(res != NULL);
+
+    log("%s:%d:end-fetch:%u", skey, round, fid);
+    MYSQL_ROW row = mysql_fetch_row(res);
+    assert(row != NULL);
+
+    mysql_free_result(res);
+    FreeDbConn(conn);
+
+    round++;
+  }
+
+  return NULL;
 }
 
 void CreateRoutine(int num) {
-	char *name = NULL;
-	for (int i = 0; i < num; ++i) {
-		name = new char[16];
-		sprintf(name, "r-%d", i);
-		co_create(&g_co[i], NULL, Routine, name);
-		assert(g_co[i] != NULL);
-		co_resume(g_co[i]);
-	}
+  char *name = NULL;
+  for (int i = 0; i < num; ++i) {
+    name = new char[16];
+    sprintf(name, "r-%d", i);
+    co_create(&g_co[i], NULL, Routine, name);
+    assert(g_co[i] != NULL);
+    co_resume(g_co[i]);
+  }
 }
 
 
-// called each loop round
+// Called each loop round
 static int CoTailProc(void *) {
   // log("%s", "epoll round");
   if (g_co_require_terminate) {
@@ -164,38 +164,38 @@ static int CoTailProc(void *) {
 }
 
 static void *CoMain(void *) {
-	g_co_thread = pthread_self();
-	int num = 100;
+  g_co_thread = pthread_self();
+  int num = 100;
 
-	CreateRoutine(num);
-	fprintf(stderr, "coroutine thread started, %d coroutines\n",
-		1);
+  CreateRoutine(num);
+  fprintf(stderr, "coroutine thread started, %d coroutines\n",
+          1);
 
-	co_eventloop(co_get_epoll_ct(), CoTailProc, NULL);
+  co_eventloop(co_get_epoll_ct(), CoTailProc, NULL);
 
-	for (int i = 0; i < num; ++i) {
-		if (g_co[i] != NULL)
-			co_release(g_co[i]);
-		g_co[i] = NULL;
-	}
+  for (int i = 0; i < num; ++i) {
+    if (g_co[i] != NULL)
+      co_release(g_co[i]);
+    g_co[i] = NULL;
+  }
 
-	fprintf(stderr, "coroutine thread exited.\n");
-	return NULL;
+  fprintf(stderr, "coroutine thread exited.\n");
+  return NULL;
 }
 
 int CoroutineInit() {
-	assert(g_co_thread == 0);
-	const int kCoThreadStackSize = 256 << 20; // 256M
+  assert(g_co_thread == 0);
+  const int kCoThreadStackSize = 256 << 20; // 256M
 
-	// maybe create a coroutine thread pool,
-	// threads in pool share the CoRoutine objects equally (g_co_routines)
-	pthread_attr_t attr;
-	pthread_attr_init(&attr);
-	pthread_attr_setstacksize(&attr, kCoThreadStackSize);
+  // maybe create a coroutine thread pool,
+  // threads in pool share the CoRoutine objects equally (g_co_routines)
+  pthread_attr_t attr;
+  pthread_attr_init(&attr);
+  pthread_attr_setstacksize(&attr, kCoThreadStackSize);
 
-	pthread_create(&g_co_thread, &attr, CoMain, NULL);
-	assert(g_co_thread != 0);
-	return 0;
+  pthread_create(&g_co_thread, &attr, CoMain, NULL);
+  assert(g_co_thread != 0);
+  return 0;
 }
 
 void CoroutineFini() {
@@ -253,7 +253,10 @@ MYSQL* MakeConn() {
   SetFdBlocking(fd, false);
 
   rpchook_t *hk = alloc_by_fd(fd);
-  hk->domain = (conn->unix_socket==NULL)?AF_INET:AF_LOCAL;
+  int domain = 0;
+  socklen_t opt_size = sizeof(domain);
+  getsockopt(fd, SOL_SOCKET, SO_DOMAIN, &domain, &opt_size);
+  hk->domain = domain;
 
   return conn;
 }
