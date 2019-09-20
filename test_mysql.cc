@@ -1,5 +1,5 @@
 // Copyright 2019, Tencent Inc.
-// Author: bondshi<bondshi@tencent.com>
+// Author: sywnff
 // Create: 2019-09-19
 // Encoding: utf-8
 #include <unistd.h>
@@ -23,7 +23,7 @@ void CoroutineFini();
 static pthread_t g_co_thread;
 static bool g_co_require_terminate = false;
 
-struct stCoRoutine_t *g_co[1000];
+struct stCoRoutine_t *g_co[10000];
 typedef std::list<MYSQL*> DBPool;
 
 MYSQL* MakeConn();
@@ -36,7 +36,8 @@ void FreeDbConn(MYSQL *conn);
 DBPool g_db_pool;
 int g_db_pool_size = 0;
 int g_db_pool_max_size = 5;
-unsigned int total_num = 0;
+int g_co_num = 10;
+unsigned int g_total_num = 0;
 
 const char *g_host = NULL;
 const char *g_user = NULL;
@@ -53,7 +54,7 @@ static void HandleSignal(int signo, siginfo_t *, void *) {
 
 int main(int argc, char **argv) {
   if (argc < 4) {
-    fprintf(stderr, "usage: ./test_mysql <db_host> <db_user> <db_passwd> [max_db_pool_size]\n");
+    fprintf(stderr, "usage: ./test_mysql <db_host> <db_user> <db_passwd> [co_routine_num] [max_db_pool_size]\n");
     return -1;
   }
 
@@ -61,7 +62,10 @@ int main(int argc, char **argv) {
   g_user = argv[2];
   g_passwd = argv[3];
   if (argc > 4) {
-    g_db_pool_max_size = atoi(argv[4]);
+    g_co_num = atoi(argv[4]);
+  }
+  if (argc > 5) {
+    g_db_pool_max_size = atoi(argv[5]);
   }
 
   memset(g_co, 0, sizeof(g_co));
@@ -99,7 +103,7 @@ void* Routine(void *key) {
     assert(conn != NULL);
 
     char sql[512] = {0};
-    int fid = total_num++;
+    int fid = g_total_num++;
     int size = snprintf(
         sql, sizeof(sql),
         "insert ignore into t1(fid,fname,fcreate_time) values(%u,'%s-%d',now())",
@@ -165,15 +169,13 @@ static int CoTailProc(void *) {
 
 static void *CoMain(void *) {
   g_co_thread = pthread_self();
-  int num = 100;
-
-  CreateRoutine(num);
+  CreateRoutine(g_co_num);
   fprintf(stderr, "coroutine thread started, %d coroutines\n",
-          1);
+          g_co_num);
 
   co_eventloop(co_get_epoll_ct(), CoTailProc, NULL);
 
-  for (int i = 0; i < num; ++i) {
+  for (int i = 0; i < g_co_num; ++i) {
     if (g_co[i] != NULL)
       co_release(g_co[i]);
     g_co[i] = NULL;
@@ -229,10 +231,13 @@ int SetFdBlocking(int fd, bool is_block) {
   return 0;
 }
 
-static inline int GetMySqlFd(const MYSQL *conn) {
-  // maybe different on mysql client api version
-  // mysql client version: 5.5.50
-  return conn->net.fd;
+void EnableCoAsyncIo(int fd) {
+  SetFdBlocking(fd, false);
+  rpchook_t *hk = alloc_by_fd(fd);
+  int domain = 0;
+  socklen_t opt_size = sizeof(domain);
+  getsockopt(fd, SOL_SOCKET, SO_DOMAIN, &domain, &opt_size);
+  hk->domain = domain;
 }
 
 MYSQL* MakeConn() {
@@ -248,15 +253,10 @@ MYSQL* MakeConn() {
     return NULL;
   }
 
-  int fd = GetMySqlFd(conn);
+  // My MYSQL version: 5.5.50, relative to mysql api version
+  int fd = conn->net.fd;
   log("set db sock noblocking:%d", fd);
-  SetFdBlocking(fd, false);
-
-  rpchook_t *hk = alloc_by_fd(fd);
-  int domain = 0;
-  socklen_t opt_size = sizeof(domain);
-  getsockopt(fd, SOL_SOCKET, SO_DOMAIN, &domain, &opt_size);
-  hk->domain = domain;
+  EnableCoAsyncIo(fd);
 
   return conn;
 }
