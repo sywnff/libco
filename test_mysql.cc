@@ -12,10 +12,12 @@
 #include <signal.h>
 #include <fcntl.h>
 #include <list>
+#include <string>
 #include <mysql/mysql.h>
 #include "co_routine.h"
 
 ////////////////////////////////////////////////////////////////////////////////
+
 
 int CoroutineInit();
 void CoroutineFini();
@@ -86,11 +88,126 @@ int main(int argc, char **argv) {
   return 0;
 }
 
+
+#define ENABLE_CO_ROUTINE
+
+template <typename T>
+class ThreadLocalVar {
+public:
+  ThreadLocalVar() {
+#ifdef ENABLE_CO_ROUTINE
+    if (pthread_key_create(&key_, nullptr) != 0) {
+      int e = errno;
+      log("pthread_key_create failed,%d,%s", errno, strerror(e));
+      abort();
+    }    
+#else
+    val_ = NULL;
+#endif
+  }
+  
+  ~ThreadLocalVar() {
+#ifdef ENABLE_CO_ROUTINE
+    T* val = reinterpret_cast<T*>(co_getspecific(key_));
+    pthread_key_delete(key_);
+    key_ = -1;
+
+    if (val != NULL) {
+      delete val;
+    }    
+#else
+    T* val = val_;
+    val_ = NULL;
+    delete val;
+#endif
+  }
+
+  T* operator ->() {
+    return GetVal();
+  }
+
+  T& operator &() {
+    return *GetVal();
+  }
+
+  T* GetVal() {
+#ifdef ENABLE_CO_ROUTINE
+    T* val = reinterpret_cast<T*>(co_getspecific(key_));  
+    if (val == NULL) {
+      val = new T();
+      co_setspecific(key_, val);      
+    }
+    return val;
+#else
+    T* val = val_;
+    if (val == NULL) {
+      val = new T();
+      val_ = val;
+    }
+
+    return val;
+#endif
+  }
+
+  T* GetRaw() {
+#ifdef ENABLE_CO_ROUTINE
+    return reinterpret_cast<T*>(co_getspecific(key_));    
+#else
+    return val_;
+#endif
+  }
+
+  void SetVal(T* val) {
+    T* old_val = GetVal();
+    if (old_val != NULL) {
+      delete old_val;
+    }
+
+#ifdef ENABLE_CO_ROUTINE
+    co_setspecific(key_, val);
+#else
+    val_ = val;
+#endif
+  }
+
+  void SetVal(const T& val) {
+    T* valptr = GetVal();
+    *valptr = val;
+  }
+
+private:
+  ThreadLocalVar(const ThreadLocalVar&){}
+
+  // disable, if ThreadLocalVal is static, the T() only call once in
+  // ThreadLocalVar::ThreadLocalVar()
+  ThreadLocalVar(const T& val){}
+
+#ifdef ENABLE_CO_ROUTINE
+  pthread_key_t key_;
+#else
+  thread_local T* val_;
+#endif
+};
+
+
 /*
   create database if not exists db_my_test;
   use db_my_test;
   create table t1(fid int primary key, fname varchar(100), fcreate_time datetime);
  */
+
+std::string GetName(int round) {
+  // static thread_local int g_token = 0;
+  // static __thread int g_token = 0;
+  static ThreadLocalVar<int> g_token;
+  if (g_token.GetRaw() == NULL) {
+    g_token.SetVal(100);    
+  }
+
+  char buf[64] = {0};
+  snprintf(buf, sizeof(buf), "%d-%d", round, (&g_token)++);
+  return buf;
+}
 
 void* Routine(void *key) {
   const char *skey = reinterpret_cast<const char*>(key);
@@ -106,8 +223,8 @@ void* Routine(void *key) {
     int fid = g_total_num++;
     int size = snprintf(
         sql, sizeof(sql),
-        "insert ignore into t1(fid,fname,fcreate_time) values(%u,'%s-%d',now())",
-        fid, skey, round);
+        "insert ignore into t1(fid,fname,fcreate_time) values(%u,'%s-%s',now())",
+        fid, skey, GetName(round).c_str());
     log("%s:%d:begin-insert:%u", skey, round, fid);
     int ret = mysql_real_query(conn, sql, size);
     log("%s:%d:end-insert:%u,ret=%d,%d,%s", skey, round, fid,
