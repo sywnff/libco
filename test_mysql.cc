@@ -54,6 +54,8 @@ static void HandleSignal(int signo, siginfo_t *, void *) {
     g_running = false;
 }
 
+static pthread_mutex_t g_lock;
+
 int main(int argc, char **argv) {
   if (argc < 4) {
     fprintf(stderr, "usage: ./test_mysql <db_host> <db_user> <db_passwd> [co_routine_num] [max_db_pool_size]\n");
@@ -100,7 +102,8 @@ public:
       int e = errno;
       log("pthread_key_create failed,%d,%s", errno, strerror(e));
       abort();
-    }    
+    }
+    log("co: %d, key: %d", co_self(), key_);
 #else
     val_ = NULL;
 #endif
@@ -216,6 +219,7 @@ void* Routine(void *key) {
 
   int round = 0;
   while (!g_co_require_terminate) {
+    pthread_mutex_lock(&g_lock);
     MYSQL *conn = GetDbConn();
     assert(conn != NULL);
 
@@ -232,6 +236,7 @@ void* Routine(void *key) {
 
     if (ret != 0) {
       FreeDbConn(conn);
+      pthread_mutex_unlock(&g_lock);
       poll(NULL, 0, 10);
       continue;
     }
@@ -256,6 +261,7 @@ void* Routine(void *key) {
     FreeDbConn(conn);
 
     round++;
+    pthread_mutex_unlock(&g_lock);
   }
 
   return NULL;
@@ -286,6 +292,14 @@ static int CoTailProc(void *) {
 
 static void *CoMain(void *) {
   g_co_thread = pthread_self();
+
+  pthread_mutexattr_t attr;
+  pthread_mutexattr_init(&attr);
+  pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE_NP); 
+  // pthread_mutex_init(&g_lock, &attr);
+  pthread_mutex_init(&g_lock, NULL);
+  pthread_mutexattr_destroy(&attr);
+
   CreateRoutine(g_co_num);
   fprintf(stderr, "coroutine thread started, %d coroutines\n",
           g_co_num);
@@ -299,6 +313,7 @@ static void *CoMain(void *) {
   }
 
   fprintf(stderr, "coroutine thread exited.\n");
+  pthread_mutex_destroy(&g_lock);
   return NULL;
 }
 

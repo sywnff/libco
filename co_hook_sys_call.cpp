@@ -1002,3 +1002,43 @@ void co_enable_hook_sys() //这函数必须在这里,否则本文件会被忽略！！！
 	}
 }
 
+typedef int (*pthread_mutex_lock_pfn_t)(pthread_mutex_t *mutex);
+typedef int (*pthread_mutex_trylock_pfn_t)(pthread_mutex_t *mutex);
+typedef int (*pthread_mutex_unlock_pfn_t)(pthread_mutex_t *mutex);
+
+static pthread_mutex_lock_pfn_t g_sys_pthread_mutex_lock_func = (pthread_mutex_lock_pfn_t)dlsym(RTLD_NEXT,"pthread_mutex_lock");
+static pthread_mutex_trylock_pfn_t g_sys_pthread_mutex_trylock_func = (pthread_mutex_lock_pfn_t)dlsym(RTLD_NEXT,"pthread_mutex_trylock");
+static pthread_mutex_unlock_pfn_t g_sys_pthread_mutex_unlock_func = (pthread_mutex_lock_pfn_t)dlsym(RTLD_NEXT,"pthread_mutex_unlock");
+
+int pthread_mutex_lock(pthread_mutex_t *mutex) {
+	HOOK_SYS_FUNC( pthread_mutex_lock );
+
+	if( !co_is_enable_sys_hook() )
+	{
+		return g_sys_pthread_mutex_lock_func(mutex);
+	}
+
+   	return 0;
+}
+
+int pthread_mutex_trylock(pthread_mutex_t *mutex) {
+	HOOK_SYS_FUNC( pthread_mutex_trylock );
+
+	if( !co_is_enable_sys_hook() )
+	{
+		return g_sys_pthread_mutex_trylock_func(mutex);
+	}
+	
+   	return 0;
+}
+
+int pthread_mutex_unlock(pthread_mutex_t *mutex) {
+	HOOK_SYS_FUNC( pthread_mutex_unlock );
+
+	if( !co_is_enable_sys_hook() )
+	{
+		return g_sys_pthread_mutex_unlock_func(mutex);
+	}
+	
+   	return 0;
+}
