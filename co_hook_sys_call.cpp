@@ -1002,6 +1002,7 @@ void co_enable_hook_sys() //这函数必须在这里,否则本文件会被忽略！！！
 	}
 }
 
+/*
 typedef int (*pthread_mutex_lock_pfn_t)(pthread_mutex_t *mutex);
 typedef int (*pthread_mutex_trylock_pfn_t)(pthread_mutex_t *mutex);
 typedef int (*pthread_mutex_unlock_pfn_t)(pthread_mutex_t *mutex);
@@ -1042,3 +1043,4 @@ int pthread_mutex_unlock(pthread_mutex_t *mutex) {
 	
    	return 0;
 }
+*/

@@ -22,10 +22,12 @@
 int CoroutineInit();
 void CoroutineFini();
 
-static pthread_t g_co_thread;
+#define MAX_CO_THREAD_NUM 32
+
+static pthread_t g_co_threads[MAX_CO_THREAD_NUM];
 static bool g_co_require_terminate = false;
 
-struct stCoRoutine_t *g_co[10000];
+static struct stCoRoutine_t *g_co[MAX_CO_THREAD_NUM][1000];
 typedef std::list<MYSQL*> DBPool;
 
 MYSQL* MakeConn();
@@ -39,6 +41,7 @@ DBPool g_db_pool;
 int g_db_pool_size = 0;
 int g_db_pool_max_size = 5;
 int g_co_num = 10;
+int g_thr_num = 4;
 unsigned int g_total_num = 0;
 
 const char *g_host = NULL;
@@ -58,21 +61,28 @@ static pthread_mutex_t g_lock;
 
 int main(int argc, char **argv) {
   if (argc < 4) {
-    fprintf(stderr, "usage: ./test_mysql <db_host> <db_user> <db_passwd> [co_routine_num] [max_db_pool_size]\n");
+    fprintf(stderr, "usage: ./test_mysql <db_host> <db_user> <db_passwd> [co_thr_num] [co_routine_num_per_thread] [max_db_pool_size]\n");
     return -1;
   }
 
   g_host = argv[1];
   g_user = argv[2];
   g_passwd = argv[3];
-  if (argc > 4) {
-    g_co_num = atoi(argv[4]);
+  int i = 4;
+  if (argc > i) {
+    g_thr_num = atoi(argv[i++]);
   }
-  if (argc > 5) {
-    g_db_pool_max_size = atoi(argv[5]);
+  if (argc > i) {
+    g_co_num = atoi(argv[i++]);
+  }
+  if (argc > i) {
+    g_db_pool_max_size = atoi(argv[i++]);
   }
 
+  memset(g_co_threads, 0, sizeof(g_co_threads));
   memset(g_co, 0, sizeof(g_co));
+
+  log("thread_num:%d, co_num_per_thread:%d, db_pool_size:%d", g_thr_num, g_co_num, g_db_pool_max_size);
 
   struct sigaction act;
   memset(&act, 0, sizeof(act));
@@ -219,7 +229,6 @@ void* Routine(void *key) {
 
   int round = 0;
   while (!g_co_require_terminate) {
-    pthread_mutex_lock(&g_lock);
     MYSQL *conn = GetDbConn();
     assert(conn != NULL);
 
@@ -235,8 +244,7 @@ void* Routine(void *key) {
         ret, mysql_errno(conn), mysql_error(conn));
 
     if (ret != 0) {
-      FreeDbConn(conn);
-      pthread_mutex_unlock(&g_lock);
+      FreeDbConn(conn);      
       poll(NULL, 0, 10);
       continue;
     }
@@ -260,21 +268,20 @@ void* Routine(void *key) {
     mysql_free_result(res);
     FreeDbConn(conn);
 
-    round++;
-    pthread_mutex_unlock(&g_lock);
+    round++;    
   }
 
   return NULL;
 }
 
-void CreateRoutine(int num) {
+void CreateRoutine(int th_idx, int num) {
   char *name = NULL;
   for (int i = 0; i < num; ++i) {
     name = new char[16];
-    sprintf(name, "r-%d", i);
-    co_create(&g_co[i], NULL, Routine, name);
-    assert(g_co[i] != NULL);
-    co_resume(g_co[i]);
+    sprintf(name, "r%d-%d", th_idx, i);
+    co_create(&g_co[th_idx][i], NULL, Routine, name);
+    assert(g_co[th_idx][i] != NULL);
+    co_resume(g_co[th_idx][i]);
   }
 }
 
@@ -290,36 +297,35 @@ static int CoTailProc(void *) {
   return 0;
 }
 
-static void *CoMain(void *) {
-  g_co_thread = pthread_self();
+static void *CoMain(void *arg) {
+  long th_idx = reinterpret_cast<long>(arg);
+  CreateRoutine(th_idx, g_co_num);
 
-  pthread_mutexattr_t attr;
-  pthread_mutexattr_init(&attr);
-  pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE_NP); 
-  // pthread_mutex_init(&g_lock, &attr);
-  pthread_mutex_init(&g_lock, NULL);
-  pthread_mutexattr_destroy(&attr);
-
-  CreateRoutine(g_co_num);
-  fprintf(stderr, "coroutine thread started, %d coroutines\n",
-          g_co_num);
+  log("Worker %d, coroutine thread started, %d coroutines\n",
+      th_idx, g_co_num);
 
   co_eventloop(co_get_epoll_ct(), CoTailProc, NULL);
 
   for (int i = 0; i < g_co_num; ++i) {
-    if (g_co[i] != NULL)
-      co_release(g_co[i]);
-    g_co[i] = NULL;
+    if (g_co[th_idx][i] != NULL)
+      co_release(g_co[th_idx][i]);
+    g_co[th_idx][i] = NULL;
   }
 
-  fprintf(stderr, "coroutine thread exited.\n");
-  pthread_mutex_destroy(&g_lock);
+  log("Worker %d, coroutine thread exited.\n", th_idx);  
   return NULL;
 }
 
-int CoroutineInit() {
-  assert(g_co_thread == 0);
+int CoroutineInit() {  
   const int kCoThreadStackSize = 256 << 20; // 256M
+  /*
+  pthread_mutexattr_t mattr;
+  pthread_mutexattr_init(&mattr);
+  pthread_mutexattr_settype(&mattr, PTHREAD_MUTEX_RECURSIVE_NP); 
+  pthread_mutex_init(&g_lock, &mattr);  
+  pthread_mutexattr_destroy(&mattr);
+  */
+  pthread_mutex_init(&g_lock, NULL);
 
   // maybe create a coroutine thread pool,
   // threads in pool share the CoRoutine objects equally (g_co_routines)
@@ -327,19 +333,28 @@ int CoroutineInit() {
   pthread_attr_init(&attr);
   pthread_attr_setstacksize(&attr, kCoThreadStackSize);
 
-  pthread_create(&g_co_thread, &attr, CoMain, NULL);
-  assert(g_co_thread != 0);
+  for (long i = 0; i < g_thr_num; ++i) {
+    assert(g_co_threads[i] == 0);
+    pthread_create(&g_co_threads[i], &attr, CoMain, reinterpret_cast<void*>(i));
+    assert(g_co_threads[i] != 0);
+  }  
+  
   return 0;
 }
 
 void CoroutineFini() {
-	if (g_co_thread == 0)
+	if (g_co_threads == 0)
 		return;
 
 	g_co_require_terminate = true;
-	pthread_join(g_co_thread, NULL);
+  for (int i = 0; i < g_thr_num; ++i) {
+    if (g_co_threads[i] == 0)
+      continue; 
+    pthread_join(g_co_threads[i], NULL);  
+    g_co_threads[i] = 0;
+  }
 
-	g_co_thread = 0;
+  pthread_mutex_destroy(&g_lock);
 }
 
 int SetFdBlocking(int fd, bool is_block) {
@@ -418,28 +433,34 @@ void FreeDbPool() {
   g_db_pool.clear();
 }
 
-MYSQL* GetDbConn() {
+MYSQL* GetDbConn() {  
   int wait_ms = 0;
   while (true) {
+    pthread_mutex_lock(&g_lock);
     if (!g_db_pool.empty()) {
         MYSQL* conn = g_db_pool.front();
         g_db_pool.pop_front();
+        pthread_mutex_unlock(&g_lock);
         return conn;
     }
 
+    /*
     if (g_db_pool_size < g_db_pool_max_size) {
       MYSQL *conn = MakeConn();
-      assert(conn != NULL);
+      assert(conn != NULL);      
       g_db_pool_size++;
       return conn;
     }
-
-    poll(NULL, 0, wait_ms++ % 10);
+    */
+    pthread_mutex_unlock(&g_lock);
+    poll(NULL, 0, wait_ms++ % 10);    
   }
 
   return NULL;
 }
 
 void FreeDbConn(MYSQL *conn) {
+  pthread_mutex_lock(&g_lock);
   g_db_pool.push_back(conn);
+  pthread_mutex_unlock(&g_lock);
 }
