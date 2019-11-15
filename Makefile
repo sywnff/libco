@@ -38,7 +38,7 @@ endif
 COLIB_OBJS=co_epoll.o co_routine.o co_hook_sys_call.o coctx_swap.o coctx.o
 #co_swapcontext.o
 
-PROGS = colib example_poll example_echosvr example_echocli example_thread  example_cond example_specific example_copystack example_closure test_mysql
+PROGS = colib example_poll example_echosvr example_echocli example_thread  example_cond example_specific example_copystack example_closure example_redis test_redis test_mysql
 
 all:$(PROGS)
 
@@ -69,9 +69,12 @@ example_setenv:example_setenv.o
 	$(BUILDEXE)
 example_closure:example_closure.o
 	$(BUILDEXE)
-
+example_redis : example_redis.o
+	$(BUILDEXE) -Wl,-rpath=/root/code/hiredis -L/root/code/hiredis -lhiredis
 test_mysql:test_mysql.o
-	$(BUILDEXE) -L/usr/lib64/mysql -lmysqlclient
+	$(BUILDEXE) -lmysqlclient -L/usr/lib64/mysql
+test_redis:test_redis.o
+	$(BUILDEXE) -Wl,-rpath=/root/code/hiredis -L/root/code/hiredis -lhiredis
 
 dist: clean libco-$(version).src.tar.gz
 

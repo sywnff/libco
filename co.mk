@@ -44,6 +44,7 @@ STATICLIBPATH=$(SRCROOT)/lib
 DYNAMICLIBPATH=$(SRCROOT)/solib
 
 INCLS += -I$(SRCROOT)
+INCLS += -I/root/code/hiredis
 
 ## default links
 ifeq ($(LINKS_DYNAMIC), 1)
@@ -66,8 +67,8 @@ CCCOMPI=$(CC) $(CFLAGS)
 BUILDEXE = $(CPP) $(BFLAGS) -o $@ $^ $(LINKS) 
 CLEAN = rm -f *.o 
 
-CPPCOMPILE = $(CPPCOMPI) $< $(FLAGS) $(INCLS) $(MTOOL_INCL) -o $@
-CCCOMPILE = $(CCCOMPI) $< $(FLAGS) $(INCLS) $(MTOOL_INCL) -o $@
+CPPCOMPILE = $(CPPCOMPI) $< $(FLAGS) $(INCLS) $(MTOOL_INCL) -o $@ -std=c++11
+CCCOMPILE = $(CCCOMPI) $< $(FLAGS) $(INCLS) $(MTOOL_INCL) -o $@ -std=c++11
 
 ARSTATICLIB = $(AR) $@.tmp $^ $(AR_FLAGS); \
 			  if [ $$? -ne 0 ]; then exit 1; fi; \
@@ -82,4 +83,6 @@ BUILDSHARELIB = $(CPPSHARE) $@.tmp $^ $(BS_FLAGS); \
 .cpp.o:
 	$(CPPCOMPILE)
 .c.o:
+	$(CCCOMPILE)
+.cc.o:
 	$(CCCOMPILE)

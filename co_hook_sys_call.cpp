@@ -197,7 +197,7 @@ rpchook_t * alloc_by_fd( int fd )
 	if( fd > -1 && fd < (int)sizeof(g_rpchook_socket_fd) / (int)sizeof(g_rpchook_socket_fd[0]) )
 	{
 		rpchook_t *lp = (rpchook_t*)calloc( 1,sizeof(rpchook_t) );
-		lp->read_timeout.tv_sec = 1;
+		lp->read_timeout.tv_sec = -1;
 		lp->write_timeout.tv_sec = 1;
 		g_rpchook_socket_fd[ fd ] = lp;
 		return lp;
@@ -347,16 +347,21 @@ ssize_t read( int fd, void *buf, size_t nbyte )
 		ssize_t ret = g_sys_read_func( fd,buf,nbyte );
 		return ret;
 	}
-	int timeout = ( lp->read_timeout.tv_sec * 1000 ) 
-				+ ( lp->read_timeout.tv_usec / 1000 );
+
+    // 阻塞且没有设置timeout的socket fd, 默认timeout 1秒
+    bool block_without_timeout = lp->read_timeout.tv_sec == -1;
+    int timeout = block_without_timeout ? 1 : ( lp->read_timeout.tv_sec * 1000 ) + ( lp->read_timeout.tv_usec / 1000 );
 
 	struct pollfd pf = { 0 };
 	pf.fd = fd;
 	pf.events = ( POLLIN | POLLERR | POLLHUP );
 
-	int pollret = poll( &pf,1,timeout );
+    int pollret = 0;
+    do {
+        pollret = poll(&pf, 1, timeout);
+    } while (pollret == 0 && block_without_timeout);
 
-	ssize_t readret = g_sys_read_func( fd,(char*)buf ,nbyte );
+	ssize_t readret = g_sys_read_func(fd, (char*)buf, nbyte);
 
 	if( readret < 0 )
 	{
@@ -477,14 +482,18 @@ ssize_t recvfrom(int socket, void *buffer, size_t length,
 		return g_sys_recvfrom_func( socket,buffer,length,flags,address,address_len );
 	}
 
-	int timeout = ( lp->read_timeout.tv_sec * 1000 ) 
-				+ ( lp->read_timeout.tv_usec / 1000 );
-
+    // 阻塞且没有设置timeout的socket fd, 默认timeout 1秒
+    bool block_without_timeout = lp->read_timeout.tv_sec == -1;
+    int timeout = block_without_timeout ? 1 : ( lp->read_timeout.tv_sec * 1000 ) + ( lp->read_timeout.tv_usec / 1000 );
 
 	struct pollfd pf = { 0 };
 	pf.fd = socket;
 	pf.events = ( POLLIN | POLLERR | POLLHUP );
-	poll( &pf,1,timeout );
+
+    int pollret = 0;
+    do {
+        pollret = poll(&pf, 1, timeout);
+    } while (pollret == 0 && block_without_timeout);
 
 	ssize_t ret = g_sys_recvfrom_func( socket,buffer,length,flags,address,address_len );
 	return ret;
@@ -555,14 +564,19 @@ ssize_t recv( int socket, void *buffer, size_t length, int flags )
 	{
 		return g_sys_recv_func( socket,buffer,length,flags );
 	}
-	int timeout = ( lp->read_timeout.tv_sec * 1000 ) 
-				+ ( lp->read_timeout.tv_usec / 1000 );
+
+    // 阻塞且没有设置timeout的socket fd, 默认timeout 1秒
+    bool block_without_timeout = lp->read_timeout.tv_sec == -1;
+    int timeout = block_without_timeout ? 1 : ( lp->read_timeout.tv_sec * 1000 ) + ( lp->read_timeout.tv_usec / 1000 );
 
 	struct pollfd pf = { 0 };
 	pf.fd = socket;
 	pf.events = ( POLLIN | POLLERR | POLLHUP );
 
-	int pollret = poll( &pf,1,timeout );
+    int pollret = 0;
+    do {
+        pollret = poll(&pf, 1, timeout);
+    } while (pollret == 0 && block_without_timeout);
 
 	ssize_t readret = g_sys_recv_func( socket,buffer,length,flags );
 
